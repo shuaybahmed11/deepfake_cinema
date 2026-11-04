@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -27,8 +28,15 @@ PROGRESS_INTERVAL = 3.0   # seconds between progress lines
 MAX_CONSECUTIVE_ERRORS = 50
 
 
+def recommended_default_profile() -> tuple[int, int]:
+    """Use a lighter default profile on Apple Silicon to improve throughput without changing the pipeline."""
+    if platform.system() == "Darwin" and platform.machine() in {"arm64", "aarch64"}:
+        return 540, 480
+    return 720, 640
+
+
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description="Swap one face in a video (offline, CPU).",
+    ap = argparse.ArgumentParser(description="Swap one face in a video (offline, CPU with Apple acceleration when available).",
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--video", type=Path, default=DEFAULT_VIDEO, help="Input video (never modified).")
     ap.add_argument("--source-face", type=Path, default=DEFAULT_SOURCE_FACE,
@@ -37,15 +45,17 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--det-model", type=Path, default=DEFAULT_DETECTOR, help="Face detector ONNX model.")
     ap.add_argument("--rec-model", type=Path, default=DEFAULT_RECOGNIZER, help="Face recognition ONNX model.")
     ap.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Output .mp4 path.")
-    ap.add_argument("--device", choices=["cpu"], default="cpu", help="Only CPU inference is supported.")
+    ap.add_argument("--device", choices=["auto", "cpu", "metal", "gpu"], default="auto",
+                    help="Execution device: 'auto' uses the fastest available provider, 'metal'/'gpu' prefer Apple GPU acceleration, and 'cpu' forces CPU.")
     ap.add_argument("--max-seconds", type=float, default=5.0,
                     help="Process only the first N seconds (0 = whole video).")
     ap.add_argument("--fps", type=float, default=20.0,
                     help="Output frame rate; frames are dropped by timestamp, never duplicated "
                          "(0 = keep the source rate).")
-    ap.add_argument("--scale-height", type=int, default=720,
+    default_scale, default_det = recommended_default_profile()
+    ap.add_argument("--scale-height", type=int, default=default_scale,
                     help="Downscale to this height, keeping aspect ratio (never upscales; 0 = keep original).")
-    ap.add_argument("--det-size", type=int, default=640,
+    ap.add_argument("--det-size", type=int, default=default_det,
                     help="Detector input size in pixels; smaller is faster, larger finds smaller faces.")
     ap.add_argument("--overwrite", action="store_true", help="Allow replacing an existing output file.")
     ap.add_argument("--keep-temp", action="store_true", help="Keep temporary files after success.")
@@ -142,8 +152,8 @@ def process(args) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
 
     print("Reminder: only process footage and face photos you have permission to use.")
-    analyzer = FaceAnalyzer(args.det_model, args.rec_model, det_size=args.det_size)
-    swapper = load_onnx_model(args.model, "face swapper")
+    analyzer = FaceAnalyzer(args.det_model, args.rec_model, det_size=args.det_size, device=args.device)
+    swapper = load_onnx_model(args.model, "face swapper", device=args.device)
     if type(swapper).__name__ != "INSwapper":
         raise ToolError(
             f"{show(args.model)} is not an InSwapper-style model (got {type(swapper).__name__}). "

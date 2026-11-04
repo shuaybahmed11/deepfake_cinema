@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -19,7 +20,91 @@ DEFAULT_SWAPPER = MODELS_DIR / "inswapper_128.onnx"
 DEFAULT_DETECTOR = MODELS_DIR / "buffalo_l" / "det_10g.onnx"
 DEFAULT_RECOGNIZER = MODELS_DIR / "buffalo_l" / "w600k_r50.onnx"
 
-CPU_PROVIDERS = ["CPUExecutionProvider"]
+
+def _maybe_import_onnxruntime():
+    try:
+        import onnxruntime as ort
+    except Exception:
+        return None
+    return ort
+
+
+def resolve_onnx_providers(device: str | None = None) -> list[str]:
+    """Prefer the best provider for the requested device while keeping an always-safe CPU fallback."""
+    requested = (device or "auto").lower()
+
+    if requested == "cpu":
+        return ["CPUExecutionProvider"]
+
+    if requested in {"gpu", "metal"}:
+        preferred = ["MetalExecutionProvider", "CoreMLExecutionProvider", "CPUExecutionProvider"]
+    else:
+        preferred = ["CPUExecutionProvider"]
+        ort = _maybe_import_onnxruntime()
+        if ort is None:
+            return preferred
+
+        available = ort.get_available_providers() or []
+        if not available:
+            return preferred
+
+        if platform.system() == "Darwin":
+            if platform.machine() in {"arm64", "aarch64"}:
+                preferred = ["CoreMLExecutionProvider", "MetalExecutionProvider", "CPUExecutionProvider"]
+            else:
+                preferred = ["CPUExecutionProvider"]
+        elif platform.system() == "Windows":
+            preferred = ["DmlExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
+        else:
+            preferred = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    ort = _maybe_import_onnxruntime()
+    if ort is None:
+        return ["CPUExecutionProvider"]
+
+    available = ort.get_available_providers() or []
+    if not available:
+        return ["CPUExecutionProvider"]
+
+    ordered: list[str] = []
+    for provider in preferred:
+        if provider in available and provider not in ordered:
+            ordered.append(provider)
+    for provider in available:
+        if provider not in ordered:
+            ordered.append(provider)
+    return ordered or preferred
+
+
+
+def recommended_onnx_threads() -> int:
+    """Use a bounded thread count to avoid oversubscribing the CPU on laptop-class machines."""
+    cpu_count = os.cpu_count() or 1
+    if platform.system() == "Darwin" and platform.machine() in {"arm64", "aarch64"}:
+        return max(1, min(cpu_count, 6))
+    return max(1, min(cpu_count, 8))
+
+
+def configure_onnx_runtime() -> None:
+    """Set conservative thread counts so inference is faster and more stable on shared Macs."""
+    threads = recommended_onnx_threads()
+    for name in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "ORT_INTRA_OP_NUM_THREADS",
+        "ORT_INTER_OP_NUM_THREADS",
+    ):
+        if name == "ORT_INTER_OP_NUM_THREADS":
+            os.environ.setdefault(name, "1")
+        else:
+            os.environ.setdefault(name, str(threads))
+
+
+configure_onnx_runtime()
+CPU_PROVIDERS = resolve_onnx_providers()
 
 
 class ToolError(Exception):

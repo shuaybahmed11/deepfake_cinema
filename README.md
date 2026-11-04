@@ -1,8 +1,10 @@
-# Movie face-swap prototype (offline, CPU)
+# Movie face-swap prototype (offline, CPU with Apple acceleration)
 
 Replaces one visible face in a **prerecorded MP4** with the face from a **photo of a consenting person**,
-and writes a new MP4 that keeps the original audio. It runs locally on the CPU, offline, and is **slow**
-(far below real time). Nothing is uploaded anywhere and nothing is downloaded automatically.
+and writes a new MP4 that keeps the original audio. It runs locally offline and is **slow**
+(far below real time). On Apple Silicon Macs, ONNX Runtime prefers `CoreMLExecutionProvider` and
+`MetalExecutionProvider` when they are available, with a CPU fallback; nothing is uploaded anywhere and
+nothing is downloaded automatically.
 
 > Only process footage and face photos you have the right to use, and only swap in the face of someone who
 > has consented. Do not publish results in a way that could mislead viewers about who appears in them.

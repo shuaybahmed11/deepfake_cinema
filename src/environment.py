@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover - stdlib fallback
     ctypes = None
 
 from .common import (DEFAULT_DETECTOR, DEFAULT_RECOGNIZER, DEFAULT_SWAPPER, CPU_PROVIDERS,
-                     ToolError, probe_video, show)
+                     ToolError, probe_video, resolve_onnx_providers, show)
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
 
@@ -67,15 +67,20 @@ def _check_ort_cpu() -> Check:
     try:
         import onnxruntime as ort
     except Exception:
-        return Check(FAIL, "ONNX Runtime CPU provider", "onnxruntime not importable",
+        return Check(FAIL, "ONNX Runtime provider", "onnxruntime not importable",
                      "python -m pip install onnxruntime")
     providers = ort.get_available_providers()
-    if "CPUExecutionProvider" not in providers:
-        return Check(FAIL, "ONNX Runtime CPU provider", f"available: {providers}",
-                     "Reinstall the CPU build: python -m pip install --force-reinstall onnxruntime")
-    extra = [p for p in providers if p != "CPUExecutionProvider"]
-    note = f"CPUExecutionProvider (other providers present but not used: {extra})" if extra else "CPUExecutionProvider"
-    return Check(OK, "ONNX Runtime CPU provider", note)
+    preferred = resolve_onnx_providers()
+    if not providers:
+        return Check(FAIL, "ONNX Runtime provider", "no providers detected",
+                     "Reinstall the ONNX Runtime package: python -m pip install --force-reinstall onnxruntime")
+    active = [p for p in preferred if p in providers]
+    if not active:
+        return Check(FAIL, "ONNX Runtime provider", f"available: {providers}",
+                     "Reinstall a compatible ONNX Runtime build for this platform.")
+    extras = [p for p in providers if p not in active]
+    note = f"{active[0]} (fallbacks: {', '.join(extras)})" if extras else active[0]
+    return Check(OK, "ONNX Runtime provider", note)
 
 
 def _read_windows_cpu_name() -> str:

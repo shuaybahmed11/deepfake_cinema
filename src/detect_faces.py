@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from .common import (CPU_PROVIDERS, DEFAULT_DETECTOR, DEFAULT_RECOGNIZER, ToolError,
-                     resolve_output_path, show)
+                     resolve_onnx_providers, resolve_output_path, show)
 
 MODEL_HELP = (
     "See README.md, section 'Models and licensing', for where to obtain authorized weights "
@@ -51,14 +51,15 @@ def require_model_file(path: Path, what: str) -> None:
         raise ToolError(f"{what} model file looks invalid (not a file or too small): {show(path)}\n{MODEL_HELP}")
 
 
-def load_onnx_model(path: Path, what: str):
-    """Load an InsightFace-compatible ONNX model on the CPU provider only."""
+def load_onnx_model(path: Path, what: str, device: str = "auto"):
+    """Load an InsightFace-compatible ONNX model using the best provider for the requested device."""
     import_runtime()
     require_model_file(path, what)
     from insightface.model_zoo import get_model
+    providers = resolve_onnx_providers(device)
     try:
         with contextlib.redirect_stdout(io.StringIO()):
-            model = get_model(str(path), providers=CPU_PROVIDERS)
+            model = get_model(str(path), providers=providers)
     except Exception as exc:
         raise ToolError(
             f"Could not load {what} model {show(path)}: {exc}\n"
@@ -73,8 +74,8 @@ class FaceDetector:
     """SCRFD detector that returns face boxes and landmarks without recognition."""
 
     def __init__(self, detector_path: Path = DEFAULT_DETECTOR,
-                 det_size: int = 640, det_thresh: float = 0.5):
-        self.det = load_onnx_model(detector_path, "face detector")
+                 det_size: int = 640, det_thresh: float = 0.5, device: str = "auto"):
+        self.det = load_onnx_model(detector_path, "face detector", device=device)
         if not hasattr(self.det, "detect"):
             raise ToolError(f"{show(detector_path)} is not a face-detection model (expected SCRFD det_10g.onnx).")
         self.det.prepare(-1, input_size=(det_size, det_size), det_thresh=det_thresh)
@@ -96,9 +97,9 @@ class FaceAnalyzer(FaceDetector):
 
     def __init__(self, detector_path: Path = DEFAULT_DETECTOR,
                  recognizer_path: Path = DEFAULT_RECOGNIZER,
-                 det_size: int = 640, det_thresh: float = 0.5):
-        super().__init__(detector_path, det_size=det_size, det_thresh=det_thresh)
-        self.rec = load_onnx_model(recognizer_path, "face recognizer")
+                 det_size: int = 640, det_thresh: float = 0.5, device: str = "auto"):
+        super().__init__(detector_path, det_size=det_size, det_thresh=det_thresh, device=device)
+        self.rec = load_onnx_model(recognizer_path, "face recognizer", device=device)
         if not hasattr(self.rec, "get_feat"):
             raise ToolError(f"{show(recognizer_path)} is not a face-recognition model (expected ArcFace w600k_r50.onnx).")
         self.rec.prepare(-1)
